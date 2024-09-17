@@ -184,21 +184,17 @@ def build_duo_model_with_custom_layer():
     """
     inputs_data = Input(shape=(MAX_LEN, 20), name='Input_duo')
 
-    # Przyjęcie etykiet jako dane wejściowe
     y_true_ecoli = Input(shape=(), name='y_true_ecoli', dtype=tf.float32)
     y_true_saureus = Input(shape=(), name='y_true_saureus', dtype=tf.float32)
 
-    # Zastosowanie customowej warstwy opartej o klasę BaseModelLayer
     base_layer_output = BaseModelLayer()(inputs_data, y_true_ecoli, y_true_saureus)
 
     # Dense layers for prediction
     prediction_ecoli = Dense(1, activation='sigmoid', name='Output_ecoli')(base_layer_output)
     prediction_saureus = Dense(1, activation='sigmoid', name='Output_saureus')(base_layer_output)
 
-    # Definicja modelu
     duo_model = Model(inputs=[inputs_data, y_true_ecoli, y_true_saureus], outputs=[prediction_ecoli, prediction_saureus])
 
-    # Kompilacja modelu z własną funkcją straty
     adam = Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-7, decay=0.0, amsgrad=False)
     duo_model.compile(loss={
         'Output_ecoli': 'binary_crossentropy',  # Strata dla aktywności
