@@ -1,6 +1,6 @@
-# Bachelor Bioinformatics Project
+# AMPlify_duo
 
-This repository contains scripts and data used in my Bachelor thesis related to Bioinformatics. The project focuses on [describe the main focus of your project, e.g., data analysis, machine learning models, etc.].
+Bachelor thesis: Siamese Models for integrated classification of antimicrobial peptide activity.
 
 ## Table of Contents
 - [About](#about)
