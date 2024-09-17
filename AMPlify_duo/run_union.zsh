@@ -1,8 +1,8 @@
 python3 src/train_ampliy_union.py \
-    -amp_act_tr ./union_esch_step/union_active_Ecoli_tr.fa \
-    -non_amp_act_tr ./union_esch_step/union_inactive_Ecoli_tr.fa \
-    -amp_tox_tr ./union_esch_step/union_active_Step_tr.fa \
-    -non_amp_tox_tr ./union_esch_step/union_inactive_Step_tr.fa \
+    -amp_act_tr ./data_union/union_ecoli_active_train.fa \
+    -non_amp_act_tr ./data_union/union_ecoli_inactive.fa \
+    -amp_tox_tr ./data_union/union_saureus_active_train.fa \
+    -non_amp_tox_tr ./union_esch_step/union_saureus_inactive_train.fa \
     -out_dir ./models_amplify_union \
     -model_name amplify_union
 
