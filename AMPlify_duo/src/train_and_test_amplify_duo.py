@@ -140,8 +140,8 @@ def load_base_model():
 
     current_dir = os.getcwd()
 
-    model_amplify_ecoli = os.path.join(current_dir, 'models', 'balanced', 'AMPlify_balanced_model_weights_1.h5')
-    model_amplify_saureus = os.path.join(current_dir, 'models', 'balanced', 'AMPlify_balanced_model_weights_1.h5')
+    model_amplify_ecoli = os.path.join(current_dir, 'models', 'AMPlify_ecoli_model_weights_1.h5')
+    model_amplify_saureus = os.path.join(current_dir, 'models', 'AMPlify_saureus_model_weights_1.h5')
 
     models_amplify = [model_amplify_ecoli, model_amplify_saureus]
 
