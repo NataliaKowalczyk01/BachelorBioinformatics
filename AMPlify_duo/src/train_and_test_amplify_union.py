@@ -14,12 +14,15 @@ from keras.models import Model
 from keras.layers import Masking, Dense, LSTM, Bidirectional, Input, Dropout
 from keras.callbacks import EarlyStopping
 #from keras.optimizers  import Adam
-from keras.optimizers.legacy import Adam 
+from keras.optimizers import Adam
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, roc_auc_score
 import tensorflow as tf
 import csv
 import os
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve
+
 
 MAX_LEN = 100 # max length for input sequences
 
@@ -95,7 +98,7 @@ def build_model_union():
 def create_csv_for_results(file_path, train_or_test):
     """
     Creates a CSV file for storing the results of a test if it doesn't already exist.
-    
+
     Args:
         file_path (str): Path to the CSV file.
         test_type (str): Type of the test (e.g., 'Test', 'Validation', 'Train') to label the columns accordingly.
@@ -192,6 +195,39 @@ def calculate_metrics(pred_ecoli, pred_saureus, y_train_ecoli, y_train_saureus):
         'fn': fn,
         'tp': tp
     }
+def plot_roc_curve(y_true_ecoli, y_pred_ecoli, y_true_saureus, y_pred_saureus, save_path):
+    """
+    Plot and save ROC curves for both E.coli and S.aureus models.
+
+    Args:
+        y_true_ecoli (array): True labels for E.coli.
+        y_pred_ecoli (array): Predicted probabilities for E.coli.
+        y_true_saureus (array): True labels for S.aureus.
+        y_pred_saureus (array): Predicted probabilities for S.aureus.
+        save_path (str): Path where the ROC curve image will be saved.
+    """
+    # Calculate ROC curve for E.coli
+    fpr_ecoli, tpr_ecoli, _ = roc_curve(y_true_ecoli, y_pred_ecoli)
+
+    # Calculate ROC curve for S.aureus
+    fpr_saureus, tpr_saureus, _ = roc_curve(y_true_saureus, y_pred_saureus)
+
+    # Plot the ROC curve
+    plt.figure()
+    plt.plot(fpr_ecoli, tpr_ecoli, color='blue', lw=2, label='E.coli ROC')
+    plt.plot(fpr_saureus, tpr_saureus, color='green', lw=2, label='S.aureus ROC')
+    plt.plot([0, 1], [0, 1], color='gray', linestyle='--')  # Diagonal line for random guessing
+
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic')
+    plt.legend(loc="lower right")
+
+    # Save the figure
+    plt.savefig(save_path)
+    plt.close()
 
 def save_metrics_to_csv(metrics, save_file_num, results_file):
     """
@@ -228,7 +264,7 @@ def save_metrics_to_csv(metrics, save_file_num, results_file):
 
 def main():
     parser = argparse.ArgumentParser(description=dedent('''
-        Model union training 
+        Model union training
         ------------------------------------------------------
         '''),
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -237,7 +273,7 @@ def main():
     parser.add_argument('-non_amp_ecoli_tr', help="Training activity non-AMP set, fasta file", required=True)
 
     parser.add_argument('-amp_ecoli_te', help="Test AMP set, fasta file (optional)", default=None, required=False)
-    parser.add_argument('-non_act_ecoli_te', help="Test non-AMP set, fasta file (optional)", default=None, required=False)
+    parser.add_argument('-non_amp_ecoli_te', help="Test non-AMP set, fasta file (optional)", default=None, required=False)
 
     parser.add_argument('-amp_saureus_tr', help="Training activity AMP set, fasta file", required=True)
     parser.add_argument('-non_amp_saureus_tr', help="Training activity non-AMP set, fasta file", required=True)
@@ -275,7 +311,7 @@ def main():
         non_amp_saureus_train.append(str(seq_record.seq))
 
     train_saureus_seq = amp_saureus_train + non_amp_saureus_train
-    y_saureus_train = np.array([0]*len(train_saureus_seq))
+    y_saureus_train = np.array([0]*len(train_ecoli_seq))
 
     i=0
     for seq in train_ecoli_seq:
@@ -288,8 +324,6 @@ def main():
     # generate one-hot encoding input and pad sequences into MAX_LEN long
     X_union = one_hot_padding(train_ecoli_seq, MAX_LEN)
 
-    indv_pred_train = [] # list of predicted scores for individual models on the training set
-
     # Set file paths for training and test results
     train_results_file = os.path.join(args.out_dir, 'model_results_duo.csv')
     val_results_file = os.path.join(args.out_dir, 'val_model_results_duo.csv')
@@ -298,7 +332,7 @@ def main():
     create_csv_for_results(train_results_file, 'Train')
     create_csv_for_results(val_results_file, 'Test')
 
-    if args.amp_ecoli_te is not None and args.non_ecoli_amp_te is not None and args.amp_saureus_te is not None and args.non_saureus_amp_te is not None:
+    if args.amp_ecoli_te is not None and args.non_amp_ecoli_te is not None and args.amp_saureus_te is not None and args.non_amp_saureus_te is not None:
         amp_ecoli_test = []
         non_amp_ecoli_test = []
         for seq_record in SeqIO.parse(args.amp_ecoli_te, 'fasta'):
@@ -353,44 +387,55 @@ def main():
 
     y_classes = map_to_classes(y_union)
 
-    for tr_ens, te_ens in ensemble.split(X_union, y_classes):
-
-        model = build_model_union()
-
-        early_stopping = EarlyStopping(monitor='val_accuracy',  min_delta=0.001, patience=50, restore_best_weights=True)
-        model.fit(X_union[tr_ens], [y_ecoli_train[tr_ens],y_saureus_train[tr_ens]], epochs=2, batch_size=32,
-                      validation_data=(X_union[te_ens], [y_ecoli_train[te_ens],y_saureus_train[te_ens]] ), verbose=2, initial_epoch=0, callbacks=[early_stopping])
+    # Split data into training and validation sets (80% training, 20% validation)
+    split_idx = int(0.8 * len(X_union))
+    X_train, X_val = X_union[:split_idx], X_union[split_idx:]
+    y_train_ecoli, y_val_ecoli = y_ecoli_train[:split_idx], y_ecoli_train[split_idx:]
+    y_train_saureus, y_val_saureus = y_saureus_train[:split_idx], y_saureus_train[split_idx:]
 
 
-        save_file_num = save_file_num + 1
-        save_dir = args.out_dir + '/' + args.model_name + '_' + str(save_file_num) + '.h5'
-        save_dir_wt = args.out_dir + '/' + args.model_name + '_weights_' + str(save_file_num) + '.h5'
-        model.save(save_dir) #save
-        model.save_weights(save_dir_wt) #save
+    model = build_model_union()
 
-        # Predicting on the training set
-        temp_pred_train = model.predict(X_union[tr_ens])
-        # temp_pred_train contains two arrays: one for ecoli and one for saureus
-        train_pred_ecoli = temp_pred_train[0].flatten()
-        train_pred_saureus = temp_pred_train[1].flatten()
-        metrics_train = calculate_metrics(train_pred_ecoli,train_pred_saureus, y_ecoli_train[tr_ens],y_saureus_train[tr_ens])
-        save_metrics_to_csv(metrics_train, save_file_num, train_results_file)
+    early_stopping = EarlyStopping(monitor='val_accuracy',  min_delta=0.001, patience=50, restore_best_weights=True)
+    model.fit(X_train, [y_train_ecoli,y_train_saureus], epochs=1000, batch_size=32,
+                validation_data=(X_val, [y_val_ecoli,y_val_saureus] ), verbose=2, initial_epoch=0, callbacks=[early_stopping])
 
-        # Predicting on the validation set
-        temp_pred_val = model.predict(X_union[te_ens])
-        # temp_pred_train contains two arrays: one for ecoli and one for saureus
-        val_pred_ecoli = temp_pred_val[0].flatten()
-        val_pred_saureus = temp_pred_val[1].flatten()
-        metrics_val = calculate_metrics(val_pred_ecoli,val_pred_saureus, y_ecoli_train[te_ens],y_saureus_train[te_ens])
-        save_metrics_to_csv(metrics_val, save_file_num, val_results_file)
 
-        # Predicting on the test set if provided
-        if args.amp_ecoli_te is not None and args.non_ecoli_amp_te is not None and args.amp_saureus_te is not None and args.non_saureus_amp_te is not None:
-            temp_pred_test = model.predict([X_test, y_ecoli_test, y_saureus_test])
-            metrics_test = calculate_metrics(temp_pred_test,y_ecoli_test, y_saureus_test)
+    save_file_num = save_file_num + 1
+    save_dir = args.out_dir + '/' + args.model_name + '_' + str(save_file_num) + '.h5'
+    save_dir_wt = args.out_dir + '/' + args.model_name + '_weights_' + str(save_file_num) + '.h5'
+    model.save(save_dir) #save
+    model.save_weights(save_dir_wt) #save
 
-            # Save metrics for test set to test results CSV
-            save_metrics_to_csv(metrics_test, save_file_num, test_results_file)
+    # Predicting on the training set
+    temp_pred_train = model.predict(X_train)
+    # temp_pred_train contains two arrays: one for ecoli and one for saureus
+    train_pred_ecoli = temp_pred_train[0].flatten()
+    train_pred_saureus = temp_pred_train[1].flatten()
+    metrics_train = calculate_metrics(train_pred_ecoli,train_pred_saureus, y_train_ecoli,y_train_saureus)
+    save_metrics_to_csv(metrics_train, save_file_num, train_results_file)
+
+    # Predicting on the validation set
+    temp_pred_val = model.predict(X_val)
+    # temp_pred_train contains two arrays: one for ecoli and one for saureus
+    val_pred_ecoli = temp_pred_val[0].flatten()
+    val_pred_saureus = temp_pred_val[1].flatten()
+    metrics_val = calculate_metrics(val_pred_ecoli,val_pred_saureus,y_val_ecoli,y_val_saureus)
+    save_metrics_to_csv(metrics_val, save_file_num, val_results_file)
+
+    # Predicting on the test set if provided
+    if args.amp_ecoli_te is not None and args.non_amp_ecoli_te is not None and args.amp_saureus_te is not None and args.non_amp_saureus_te is not None:
+        temp_pred_test = model.predict(X_test)
+
+        test_pred_ecoli = temp_pred_test[0].flatten()
+        test_pred_saureus = temp_pred_test[1].flatten()
+        metrics_test = calculate_metrics(test_pred_ecoli, test_pred_saureus, y_ecoli_test, y_saureus_test)
+
+        # Save metrics for test set to test results CSV
+        save_metrics_to_csv(metrics_test, save_file_num, test_results_file)
+        # After predicting on the test set
+        plot_roc_curve(y_ecoli_test, test_pred_ecoli, y_saureus_test, test_pred_saureus, os.path.join(args.out_dir, 'roc_curve_test.png'))
+
 
 if __name__ == "__main__":
     main()
