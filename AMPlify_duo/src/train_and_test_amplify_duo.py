@@ -14,11 +14,13 @@ from layers import Attention, MultiHeadAttention
 from keras.models import Model
 from keras.layers import Masking, Dense, LSTM, Bidirectional, Input, Dropout, Concatenate, Layer
 from keras.callbacks import EarlyStopping
-from keras.optimizers.legacy  import Adam
+from keras.optimizers  import Adam
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, confusion_matrix
 import tensorflow as tf
 import csv
+import matplotlib.pyplot as plt
+from sklearn.metrics import roc_curve
 
 MAX_LEN = 100 # max length for input sequences
 
@@ -59,28 +61,29 @@ def predict_by_class(scores):
             classes.append(0)
     return np.array(classes)
 
-def contrastive_loss(attention_ecoli, attention_saureus, y_true_ecoli, y_true_saureus, margin=2.0):
+def contrastive_loss(attention_ecoli, attention_saureus, y_true_ecoli, y_true_saureus, margin=1.0):
     # checking the labels
     y = tf.cast(tf.not_equal(y_true_ecoli, y_true_saureus), dtype=tf.float32)
-
+    """
     tf.print("attention_ecoli shape:", tf.shape(attention_ecoli))
     tf.print("attention_saureus shape:", tf.shape(attention_saureus))
     tf.print("y_true_ecoli shape:", tf.shape(y_true_ecoli))
     tf.print("y_true_saureus shape:", tf.shape(y_true_saureus))
     tf.print("y shape (after cast):", tf.shape(y))
+    """
 
     euclidean_distance = tf.sqrt(tf.reduce_sum(tf.square(attention_ecoli - attention_saureus), axis=1))
-    
+    """
     tf.print("euclidean_distance shape:", tf.shape(euclidean_distance))
     tf.print("euclidean_distance values:", euclidean_distance)
-
+    """
     # Contrastive loss
     loss_same_class = (1 - y) * tf.square(euclidean_distance)  # same labek for ecoli and saureus
     loss_diff_class = y * tf.square(tf.maximum(margin - euclidean_distance, 0))  # different label for ecoli and saureus
 
     loss = tf.reduce_mean(loss_same_class + loss_diff_class)
-    
-    tf.print("Final loss value:", loss)
+
+    # tf.print("Final loss value:", loss)
 
     return loss
 def build_attention():
@@ -140,8 +143,8 @@ def load_base_model():
 
     current_dir = os.getcwd()
 
-    model_amplify_ecoli = os.path.join(current_dir, 'models', 'AMPlify_ecoli_model_weights_1.h5')
-    model_amplify_saureus = os.path.join(current_dir, 'models', 'AMPlify_saureus_model_weights_1.h5')
+    model_amplify_ecoli = os.path.join(current_dir, 'models_amplify_ecoli', 'amplify_ecoli_weights_1.h5')
+    model_amplify_saureus = os.path.join(current_dir, 'models_amplify_saureus', 'amplify_saureus_weights_1.h5')
 
     models_amplify = [model_amplify_ecoli, model_amplify_saureus]
 
@@ -157,21 +160,21 @@ class BaseModelLayer(Layer):
         self.model_amplify_ecoli = load_base_model()[0]
         self.model_amplify_saureus = load_base_model()[1]
 
-        for layer in self.model_amplify_ecoli.layers:  
+        for layer in self.model_amplify_ecoli.layers:
             layer.trainable = False
-        for layer in self.model_amplify_saureus.layers: 
+        for layer in self.model_amplify_saureus.layers:
             layer.trainable = False
 
     def call(self, inputs, y_true_ecoli, y_true_saureus):
 
-        input_data = inputs 
+        input_data = inputs
         attention_ecoli = self.model_amplify_ecoli(input_data)
         attention_saureus = self.model_amplify_saureus(input_data)
 
         concatenated = Concatenate(name='Concatenate', axis=-1)([attention_ecoli, attention_saureus])
 
         self.add_loss(contrastive_loss(attention_ecoli, attention_saureus, y_true_ecoli, y_true_saureus))
-  
+
         return concatenated
 
     def get_config(self):
@@ -206,7 +209,7 @@ def build_duo_model_with_custom_layer():
 def create_csv_for_results(file_path, train_or_test):
     """
     Creates a CSV file for storing the results of a test if it doesn't already exist.
-    
+
     Args:
         file_path (str): Path to the CSV file.
         test_type (str): Type of the test (e.g., 'Test', 'Validation', 'Train') to label the columns accordingly.
@@ -337,6 +340,40 @@ def save_metrics_to_csv(metrics, save_file_num, results_file):
             metrics['tp']
         ])
 
+
+def plot_roc_curve(y_true_ecoli, y_pred_ecoli, y_true_saureus, y_pred_saureus, save_path):
+    """
+    Plot and save ROC curves for both E.coli and S.aureus models.
+
+    Args:
+        y_true_ecoli (array): True labels for E.coli.
+        y_pred_ecoli (array): Predicted probabilities for E.coli.
+        y_true_saureus (array): True labels for S.aureus.
+        y_pred_saureus (array): Predicted probabilities for S.aureus.
+        save_path (str): Path where the ROC curve image will be saved.
+    """
+    # Calculate ROC curve for E.coli
+    fpr_ecoli, tpr_ecoli, _ = roc_curve(y_true_ecoli, y_pred_ecoli)
+
+    # Calculate ROC curve for S.aureus
+    fpr_saureus, tpr_saureus, _ = roc_curve(y_true_saureus, y_pred_saureus)
+
+    # Plot the ROC curve
+    plt.figure()
+    plt.plot(fpr_ecoli, tpr_ecoli, color='blue', lw=2, label='E.coli ROC')
+    plt.plot(fpr_saureus, tpr_saureus, color='green', lw=2, label='S.aureus ROC')
+    plt.plot([0, 1], [0, 1], color='gray', linestyle='--')  # Diagonal line for random guessing
+
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic')
+    plt.legend(loc="lower right")
+
+    # Save the figure
+    plt.savefig(save_path)
+    plt.close()
 def main():
     parser = argparse.ArgumentParser(description=dedent('''
         Siamense training
@@ -350,13 +387,13 @@ def main():
     parser.add_argument('-non_amp_ecoli_tr', help="Training activity non-AMP set, fasta file", required=True)
 
     parser.add_argument('-amp_ecoli_te', help="Test AMP set, fasta file (optional)", default=None, required=False)
-    parser.add_argument('-non_ecoli_amp_te', help="Test non-AMP set, fasta file (optional)", default=None, required=False)
+    parser.add_argument('-non_amp_ecoli_te', help="Test non-AMP set, fasta file (optional)", default=None, required=False)
 
     parser.add_argument('-amp_saureus_tr', help="Training activity AMP set, fasta file", required=True)
     parser.add_argument('-non_amp_saureus_tr', help="Training activity non-AMP set, fasta file", required=True)
 
     parser.add_argument('-amp_saureus_te', help="Test AMP set, fasta file (optional)", default=None, required=False)
-    parser.add_argument('-non_saureus_amp_te', help="Test non-AMP set, fasta file (optional)", default=None, required=False)
+    parser.add_argument('-non_amp_saureus_te', help="Test non-AMP set, fasta file (optional)", default=None, required=False)
 
     parser.add_argument('-out_dir', help="Output directory", required=True)
     parser.add_argument('-model_name', help="File name of trained model weights", required=True)
@@ -409,8 +446,8 @@ def main():
     X_union = one_hot_padding(train_ecoli_seq, MAX_LEN)
 
     # Set file paths for training and test results
-    train_results_file = os.path.join(args.out_dir, 'model_results_duo.csv')
-    val_results_file = os.path.join(args.out_dir, 'val_model_results_duo.csv')
+    train_results_file = os.path.join(args.out_dir, 'model_results_duo_margin_1.csv')
+    val_results_file = os.path.join(args.out_dir, 'val_model_results_duo_margin_1.csv')
 
     # Create CSV files if not already present
     create_csv_for_results(train_results_file, 'Train')
@@ -424,7 +461,7 @@ def main():
     y_train_saureus, y_val_saureus = y_saureus_train[:split_idx], y_saureus_train[split_idx:]
 
 
-    if args.amp_ecoli_te is not None and args.non_ecoli_amp_te is not None and args.amp_saureus_te is not None and args.non_saureus_amp_te is not None:
+    if args.amp_ecoli_te is not None and args.non_amp_ecoli_te is not None and args.amp_saureus_te is not None and args.non_amp_saureus_te is not None:
         amp_ecoli_test = []
         non_amp_ecoli_test = []
         for seq_record in SeqIO.parse(args.amp_ecoli_te, 'fasta'):
@@ -467,7 +504,7 @@ def main():
         X_test = one_hot_padding(test_ecoli_seq, MAX_LEN)
 
         # Set file paths for test results
-        test_results_file = os.path.join(args.out_dir, 'model_results_duo_test.csv')
+        test_results_file = os.path.join(args.out_dir, 'model_results_duo_test_margine_1.csv')
 
         # Create CSV files if not already present
         create_csv_for_results(test_results_file, 'Test')
@@ -478,18 +515,18 @@ def main():
 
     early_stopping = EarlyStopping(monitor='val_accuracy',  min_delta=0.001, patience=50, restore_best_weights=True)
 
-    model.fit([X_train, y_train_ecoli, y_train_saureus], 
-            [y_train_ecoli, y_train_saureus], 
-            epochs=2, batch_size=32,
-            validation_data=([X_val, y_val_ecoli, y_val_saureus], 
+    model.fit([X_train, y_train_ecoli, y_train_saureus],
+            [y_train_ecoli, y_train_saureus],
+            epochs=1000, batch_size=32,
+            validation_data=([X_val, y_val_ecoli, y_val_saureus],
                             [y_val_ecoli, y_val_saureus]),
             verbose=2, initial_epoch=0, callbacks=[early_stopping])
-    
+
     save_file_num = 1
     save_dir_wt = os.path.join(args.out_dir, f'{args.model_name}_weights_{save_file_num}.tf')
     if os.path.exists(save_dir_wt):
         os.remove(save_dir_wt)
-    model.save_weights(save_dir_wt, save_format='tf')  
+    model.save_weights(save_dir_wt, save_format='tf')
     print(f"Zapisano wagi: {save_dir_wt}")
 
     # Predicting on the training set
@@ -509,12 +546,15 @@ def main():
     save_metrics_to_csv(metrics_val, save_file_num, val_results_file)
 
     # Predicting on the test set if provided
-    if args.amp_ecoli_te is not None and args.non_ecoli_amp_te is not None and args.amp_saureus_te is not None and args.non_saureus_amp_te is not None:
+    if args.amp_ecoli_te is not None and args.non_amp_ecoli_te is not None and args.amp_saureus_te is not None and args.non_amp_saureus_te is not None:
         temp_pred_test = model.predict([X_test, y_ecoli_test, y_saureus_test])
-        metrics_test = calculate_metrics(temp_pred_test,y_ecoli_test, y_saureus_test)
+        test_pred_ecoli = temp_pred_test[0].flatten()
+        test_pred_saureus = temp_pred_test[1].flatten()
+        metrics_test = calculate_metrics(test_pred_ecoli,test_pred_saureus ,y_ecoli_test, y_saureus_test)
 
         # Save metrics for test set to test results CSV
         save_metrics_to_csv(metrics_test, save_file_num, test_results_file)
+        plot_roc_curve(y_ecoli_test, test_pred_ecoli, y_saureus_test, test_pred_saureus, os.path.join(args.out_dir, 'roc_curve_test_margin1.png'))
 
 
 if __name__ == "__main__":
